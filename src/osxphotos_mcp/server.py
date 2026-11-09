@@ -118,7 +118,9 @@ def build_server(
         Pass a topic (one word, for example "location") to see only the options about it.
         """
         with _explained():
-            return passthrough.command_help(command, allow_write=allow_write, topic=topic)
+            return passthrough.command_help(
+                command, allow_write=allow_write, topic=topic, include_hidden=include_hidden
+            )
 
     @server.tool(
         annotations=ToolAnnotations(destructive_hint=allow_write, open_world_hint=False),

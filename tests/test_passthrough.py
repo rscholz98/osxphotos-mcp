@@ -23,7 +23,7 @@ def test_write_command_is_rejected_without_allow_write():
 
 
 def test_write_command_is_allowed_with_allow_write():
-    passthrough.check("batch-edit", ["--title", "x"], allow_write=True)
+    passthrough.check("batch-edit", ["--title", "x"], allow_write=True, include_hidden=True)
 
 
 @pytest.mark.parametrize(
@@ -42,7 +42,7 @@ def test_write_command_is_allowed_with_allow_write():
 )
 def test_options_that_execute_code_are_rejected_even_with_allow_write(command, args):
     with pytest.raises(ValueError, match="not allowed"):
-        passthrough.check(command, args, allow_write=True)
+        passthrough.check(command, args, allow_write=True, include_hidden=True)
 
 
 @pytest.mark.parametrize(
@@ -55,7 +55,7 @@ def test_options_that_execute_code_are_rejected_even_with_allow_write(command, a
 )
 def test_short_aliases_of_code_executing_options_are_rejected(command, args):
     with pytest.raises(ValueError, match="not allowed"):
-        passthrough.check(command, args, allow_write=True)
+        passthrough.check(command, args, allow_write=True, include_hidden=True)
 
 
 @pytest.mark.parametrize(
@@ -68,8 +68,8 @@ def test_short_aliases_of_code_executing_options_are_rejected(command, args):
 )
 def test_options_that_change_data_need_allow_write(command, args):
     with pytest.raises(ValueError, match="--allow-write"):
-        passthrough.check(command, args, allow_write=False)
-    passthrough.check(command, args, allow_write=True)
+        passthrough.check(command, args, allow_write=False, include_hidden=True)
+    passthrough.check(command, args, allow_write=True, include_hidden=True)
 
 
 def test_configured_library_is_passed_to_commands_that_accept_it():
@@ -214,6 +214,8 @@ def test_only_these_read_commands_cannot_leave_out_hidden_photos():
         "albums",
         "compare",
         "dump",
+        "exiftool",
+        "exportdb",
         "info",
         "keywords",
         "labels",
@@ -222,20 +224,21 @@ def test_only_these_read_commands_cannot_leave_out_hidden_photos():
     }
 
 
-@pytest.mark.parametrize(
-    "command", ["albums", "compare", "dump", "info", "keywords", "labels", "persons", "places"]
-)
+UNFILTERED = ["albums", "compare", "dump", "exiftool", "exportdb", "info", "keywords", "labels"]
+UNFILTERED += ["persons", "places", "batch-edit", "import", "timewarp"]
+
+
+@pytest.mark.parametrize("command", UNFILTERED)
 def test_commands_that_cannot_leave_out_hidden_photos_are_refused(command):
+    # Also with writes enabled: `timewarp --inspect --year 2025` would list hidden photos.
     with pytest.raises(ValueError, match="--include-hidden"):
-        passthrough.check(command, [], allow_write=False)
-    passthrough.check(command, [], allow_write=False, include_hidden=True)
+        passthrough.check(command, [], allow_write=True)
+    passthrough.check(command, [], allow_write=True, include_hidden=True)
 
 
-@pytest.mark.parametrize(
-    "command", ["about", "list", "show", "uuid", "exportdb", "query", "export"]
-)
-def test_commands_without_hidden_photo_data_stay_available(command):
-    passthrough.check(command, [], allow_write=False)
+@pytest.mark.parametrize("command", ["about", "list", "show", "uuid", "query", "export", "sync"])
+def test_commands_that_filter_or_show_no_photo_data_stay_available(command):
+    passthrough.check(command, [], allow_write=True)
 
 
 def test_hidden_photos_cannot_be_requested_unless_the_server_includes_them():
@@ -275,5 +278,23 @@ def test_crash_log_of_a_failed_command_is_not_left_in_the_working_directory(tmp_
     monkeypatch.chdir(tmp_path)
     sqlite3.connect(tmp_path / "not-an-export.db").execute("create table t (x)").connection.close()
     with pytest.raises(RuntimeError):
-        passthrough.run("exportdb", ["not-an-export.db", "--sql", "select 1"], allow_write=False)
+        passthrough.run(
+            "exportdb",
+            ["not-an-export.db", "--sql", "select 1"],
+            allow_write=False,
+            include_hidden=True,
+        )
     assert not (tmp_path / "osxphotos_crash.log").exists()
+
+
+def test_command_list_separates_commands_that_need_hidden_photos():
+    lines = passthrough.command_help(None, allow_write=True).splitlines()
+    assert lines[0].startswith("Commands: ") and "labels" not in lines[0] and "query" in lines[0]
+    assert "sync" in lines[1] and "timewarp" not in lines[1]
+    assert "--include-hidden" in lines[2] and "labels" in lines[2] and "timewarp" in lines[2]
+
+
+def test_command_list_has_no_hidden_section_when_hidden_photos_are_included():
+    text = passthrough.command_help(None, allow_write=True, include_hidden=True)
+    assert "--include-hidden" not in text
+    assert "labels" in text.splitlines()[0]

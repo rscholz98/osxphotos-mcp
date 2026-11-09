@@ -60,12 +60,14 @@ HIDDEN_COMMANDS = frozenset({"add-locations", "export", "push-exif", "query", "s
 """Commands that take `--not-hidden`, so hidden photos can be left out of their results."""
 
 NO_PHOTO_DATA_COMMANDS = frozenset(
-    {"about", "dbversion", "exiftool", "exportdb", "list", "orphans", "show", "uuid", "version"}
+    {"about", "dbversion", "list", "orphans", "show", "uuid", "version"}
 )
-"""Read commands whose output is not drawn from the photos in the library.
+"""Commands whose output says nothing about photos the user did not select themselves.
 
-Every other read command must be able to filter hidden photos (`HIDDEN_COMMANDS`), or it is
-refused unless the server includes hidden photos.
+Every other command must be able to filter hidden photos (`HIDDEN_COMMANDS`), or it is refused
+unless the server includes hidden photos. That covers commands that list photos from earlier
+exports (`exportdb`, `exiftool`) and write commands that can print the photos they select
+(`timewarp --inspect`, `batch-edit`, `import`).
 """
 
 BLOCKED_OPTIONS = frozenset(
@@ -126,12 +128,8 @@ def check(
     _check_command(command)
     if command in WRITE_COMMANDS and not allow_write:
         raise ValueError(f"'{command}' changes the Photos library; {_NEEDS_WRITE}.")
-    filters_hidden = command in HIDDEN_COMMANDS | NO_PHOTO_DATA_COMMANDS | WRITE_COMMANDS
-    if not include_hidden and not filters_hidden:
-        raise ValueError(
-            f"'{command}' cannot leave out hidden photos; use the other tools or query, "
-            f"or {_NEEDS_HIDDEN}."
-        )
+    if not include_hidden and command not in HIDDEN_COMMANDS | NO_PHOTO_DATA_COMMANDS:
+        raise ValueError(f"'{command}' cannot leave out hidden photos; {_NEEDS_HIDDEN}.")
     for arg in args:
         if "function:" in arg:
             raise ValueError("Template functions ('function:') are not allowed: they run code.")
@@ -184,15 +182,31 @@ def run(
     return truncate(_osxphotos(built))
 
 
-def command_help(command: str | None, *, allow_write: bool, topic: str | None = None) -> str:
+def command_help(
+    command: str | None,
+    *,
+    allow_write: bool,
+    topic: str | None = None,
+    include_hidden: bool = False,
+) -> str:
     """Help for one command (optionally only the options about `topic`), or the command list."""
     if not command:
+        usable = HIDDEN_COMMANDS | NO_PHOTO_DATA_COMMANDS
+        if include_hidden:
+            usable = READ_COMMANDS | WRITE_COMMANDS
+        unusable = (READ_COMMANDS | WRITE_COMMANDS) - usable
         state = "enabled" if allow_write else f"disabled; {_NEEDS_WRITE}"
-        return (
-            f"Commands: {', '.join(sorted(READ_COMMANDS))}\n"
-            f"Commands that change the library ({state}): {', '.join(sorted(WRITE_COMMANDS))}\n"
-            "Call osxphotos_help with a command name to see its options."
-        )
+        lines = [
+            f"Commands: {_names(READ_COMMANDS & usable)}",
+            f"Commands that change the library ({state}): {_names(WRITE_COMMANDS & usable)}",
+        ]
+        if unusable:
+            lines.append(
+                f"Commands that cannot leave out hidden photos (disabled; {_NEEDS_HIDDEN}): "
+                f"{_names(unusable)}"
+            )
+        lines.append("Call osxphotos_help with a command name to see its options.")
+        return "\n".join(lines)
     _check_command(command)
     if topic:
         return truncate(_osxphotos(["help", command, topic]))
@@ -216,6 +230,10 @@ def option_index(help_text: str) -> str:
         "with a topic such as 'sidecar' to read the descriptions of matching options):\n"
         f"{listing}\n"
     )
+
+
+def _names(commands: frozenset[str]) -> str:
+    return ", ".join(sorted(commands))
 
 
 def _check_command(command: str) -> None:

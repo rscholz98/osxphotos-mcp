@@ -100,7 +100,7 @@ def test_library_changes_are_refused_by_default():
 def test_library_changes_pass_the_guard_with_allow_write():
     # `--help` keeps this from touching anything: it only proves the command is let through.
     result = call(
-        build_server(allow_write=True),
+        build_server(allow_write=True, include_hidden=True),
         "run_osxphotos",
         {"command": "batch-edit", "args": ["--help"]},
     )
