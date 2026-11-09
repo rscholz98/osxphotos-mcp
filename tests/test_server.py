@@ -219,3 +219,26 @@ def test_hidden_photo_is_not_returned_by_get_photo_or_export(library_path, tmp_p
         "exported": [],
         "skipped": [{"uuid": hidden, "reason": "hidden"}],
     }
+
+
+def test_preload_flag_reaches_the_server(library_path):
+    command = StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-c",
+            "from osxphotos_mcp import main; main()",
+            "--library",
+            library_path,
+            "--preload",
+        ],
+    )
+    assert call(command, "search_photos").structured_content["total"] == 13
+
+
+def test_run_osxphotos_does_not_overwrite_files_by_default(library_path, tmp_path):
+    settings = tmp_path / "settings.toml"
+    settings.write_text("keep me")
+    arguments = {"command": "export", "args": [str(tmp_path), "--save-config", str(settings)]}
+    result = call(build_server(library_path), "run_osxphotos", arguments)
+    assert "--allow-write" in error_text(result)
+    assert settings.read_text() == "keep me"

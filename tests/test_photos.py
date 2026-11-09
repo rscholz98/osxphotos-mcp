@@ -1,5 +1,9 @@
 import os
+import threading
+import time
+import unicodedata
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -202,12 +206,21 @@ def test_database_is_not_reloaded_for_every_change_on_disk(library_path, touch_d
     assert lib.db() is first
 
 
-def test_database_is_reloaded_once_the_loaded_copy_is_old_enough(library_path, touch_database):
+def until(condition, seconds=30):
+    """Wait for something a background thread does."""
+    deadline = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.02)
+
+
+def test_changed_database_is_reloaded_in_the_background(library_path, touch_database):
     lib = Library(library_path, reload_after=0)
     first = lib.db()
     assert lib.db() is first
     touch_database()
-    assert lib.db() is not first
+    assert lib.db() is first  # this call is answered from the loaded copy, without waiting
+    until(lambda: lib.db() is not first)
 
 
 def test_refresh_reloads_the_database_on_next_use(library_path):
@@ -322,8 +335,6 @@ def test_people_and_keyword_counts_include_hidden_photos_only_on_request(library
 
 def album(title, *hidden_flags):
     """A stand-in for an osxphotos album; the test libraries have no hidden photo in an album."""
-    from types import SimpleNamespace
-
     photos = [SimpleNamespace(hidden=flag) for flag in hidden_flags]
     return SimpleNamespace(title=title, folder_names=[], photos=photos)
 
@@ -355,3 +366,191 @@ def test_empty_album_is_still_listed():
         "count": 0,
         "shared": True,
     }
+
+
+def test_search_end_date_without_dashes_includes_that_day_too(lib):
+    assert lib.search(from_date="20180928", to_date="20180928")["total"] == 3
+
+
+def test_search_by_the_placeholder_for_unnamed_faces_finds_nothing(lib):
+    assert lib.search(person="_UNKNOWN_")["total"] == 0
+
+
+def test_search_matches_names_typed_in_another_unicode_form(lib):
+    album = "2018-10 - Sponsion, Museum, Frühstück, Römermuseum"
+    decomposed = unicodedata.normalize("NFD", album)
+    assert decomposed != album
+    assert lib.search(album=decomposed)["total"] == 1
+    assert lib.search(text=unicodedata.normalize("NFD", "frühstück"))["total"] == 1
+
+
+def test_search_filters_find_the_same_photos_as_osxphotos(lib):
+    import osxphotos
+
+    db = lib.db()
+
+    def expected(**filters):
+        options = osxphotos.QueryOptions(not_hidden=True, ignore_case=True, **filters)
+        return {photo.uuid for photo in db.query(options)}
+
+    def found(**filters):
+        return {photo["uuid"] for photo in lib.search(limit=100, **filters)["photos"]}
+
+    for person in db.persons:
+        if person != "_UNKNOWN_":
+            assert found(person=person.upper()) == expected(person=[person]), person
+    for keyword in db.keywords:
+        assert found(keyword=keyword.upper()) == expected(keyword=[keyword]), keyword
+    for place in ("adelaide", "united", "a"):
+        assert found(place=place) == expected(place=[place]), place
+    assert found(media_type="video") == expected(photos=False)
+    assert found(media_type="photo") == expected(movies=False)
+    assert found(favorite=False) == expected(not_favorite=True)
+
+
+def test_searchable_text_is_built_once_for_each_photo(library_path, monkeypatch):
+    from osxphotos_mcp import photos
+
+    built = []
+    build = photos._searchable_text
+    monkeypatch.setattr(photos, "_searchable_text", lambda photo: built.append(1) or build(photo))
+    lib = Library(library_path)
+    assert lib.search(text="pumpkin")["total"] == lib.search(text="pumpkin")["total"]
+    lib.search(text="wedding")
+    assert len(built) == 13
+
+
+def test_tool_calls_use_the_library_one_at_a_time(library_path, monkeypatch):
+    from osxphotos_mcp import photos
+
+    lib = Library(library_path)
+    lib.db()
+    busy, overlaps = [], []
+    details = photos._details
+
+    def slow_details(photo):
+        busy.append(1)
+        time.sleep(0.02)
+        overlaps.append(len(busy) > 1)
+        busy.pop()
+        return details(photo)
+
+    monkeypatch.setattr(photos, "_details", slow_details)
+    threads = [threading.Thread(target=lib.get_photo, args=(WEDDING,)) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert overlaps == [False] * 6
+
+
+def test_preload_loads_the_library_before_the_first_call(library_path, monkeypatch):
+    lib = Library(library_path)
+    lib.preload().join()
+    monkeypatch.setattr("osxphotos.PhotosDB", None)  # loading again would now fail
+    assert lib.search()["total"] == 13
+
+
+def test_preload_leaves_a_loading_problem_to_the_first_call(monkeypatch):
+    def denied(*args, **kwargs):
+        raise OSError("Error copying Photos.sqlite")
+
+    monkeypatch.setattr("osxphotos.PhotosDB", denied)
+    lib = Library(None)
+    lib.preload().join()
+    with pytest.raises(RuntimeError, match="Full Disk Access"):
+        lib.search()
+
+
+def test_reload_that_started_before_a_refresh_is_thrown_away(library_path, touch_database):
+    # A write command refreshes the library; a reload begun before it may predate the change.
+    import osxphotos
+
+    lib = Library(library_path, reload_after=0)
+    first = lib.db()
+    load, started, release, reloaded = osxphotos.PhotosDB, threading.Event(), threading.Event(), []
+
+    def held_back(*args, **kwargs):
+        started.set()
+        release.wait(30)
+        reloaded.append(load(*args, **kwargs))
+        return reloaded[0]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("osxphotos.PhotosDB", held_back)
+        touch_database()
+        assert lib.db() is first
+        started.wait(30)
+    lib.refresh()
+    after_write = lib.db()
+    release.set()
+    until(lambda: reloaded)
+    time.sleep(0.2)
+    assert lib.db() is after_write
+
+
+def test_export_copies_a_photo_listed_twice_only_once(lib, tmp_path):
+    result = lib.export([PUMPKINS2, PUMPKINS2], str(tmp_path))
+    assert len(result["exported"]) == 1
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_export_skips_a_photo_in_recently_deleted(lib, tmp_path):
+    result = lib.export([TRASHED], str(tmp_path))
+    assert result == {
+        "exported": [],
+        "skipped": [{"uuid": TRASHED, "reason": "in Recently Deleted"}],
+    }
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_export_says_when_only_the_original_of_an_edited_photo_is_on_this_mac(
+    library_path, tmp_path, monkeypatch
+):
+    # The test library has no such photo: an edit whose rendered file is still in iCloud.
+    asked_for = []
+
+    def export(folder, edited):
+        asked_for.append(edited)
+        return [f"{folder}/IMG_1.jpg"]
+
+    photo = SimpleNamespace(
+        hidden=False, intrash=False, hasadjustments=True, path="/x", path_edited=None, export=export
+    )
+    lib = Library(library_path)
+    monkeypatch.setattr(lib.db(), "get_photo", lambda uuid: photo)
+    result = lib.export(["EDITED"], str(tmp_path))
+    assert asked_for == [False]
+    assert result["exported"] == [f"{tmp_path}/IMG_1.jpg"]
+    assert result["warnings"] == [
+        {
+            "uuid": "EDITED",
+            "warning": "edited version not downloaded from iCloud; exported the original",
+        }
+    ]
+
+
+def test_calls_are_not_held_up_while_search_is_prepared_in_the_background(
+    library_path, monkeypatch
+):
+    from osxphotos_mcp import photos
+
+    build = photos._searchable_text
+
+    began = threading.Event()
+
+    def slow_build(photo):
+        began.set()
+        until = time.monotonic() + 0.05
+        while time.monotonic() < until:  # busy, as the real work is: sleeping would give way
+            pass
+        return build(photo)
+
+    monkeypatch.setattr(photos, "_PREPARE_AT_ONCE", 1)
+    monkeypatch.setattr(photos, "_searchable_text", slow_build)
+    lib = Library(library_path)
+    lib.db()  # preparing the 13 photos now takes 0.65 s in the background
+    began.wait(30)
+    started = time.monotonic()
+    lib.get_photo(WEDDING)
+    assert time.monotonic() - started < 0.3

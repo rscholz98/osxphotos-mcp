@@ -11,15 +11,24 @@ def main() -> None:
     parser.add_argument(
         "--allow-write",
         action="store_true",
-        help="enable osxphotos commands that change the Photos library",
+        help="enable osxphotos commands and options that change the Photos library, "
+        "or overwrite or delete files",
     )
     parser.add_argument(
         "--include-hidden",
         action="store_true",
         help="include photos that are hidden in Photos",
     )
+    parser.add_argument(
+        "--preload",
+        action="store_true",
+        help="load the library when the server starts, not on first use",
+    )
     options = parser.parse_args()
 
     from .server import build_server
 
-    build_server(options.library, options.allow_write, options.include_hidden).run()
+    server = build_server(
+        options.library, options.allow_write, options.include_hidden, options.preload
+    )
+    server.run()

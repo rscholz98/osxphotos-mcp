@@ -1014,7 +1014,7 @@ wheels = [
 
 [[package]]
 name = "osxphotos-mcp"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -1029,8 +1029,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", specifier = ">=2.3.0" },
-    { name = "osxphotos", specifier = ">=0.78.1" },
+    { name = "mcp", specifier = ">=2.3.0,<3" },
+    { name = "osxphotos", specifier = "==0.78.1" },
 ]
 
 [package.metadata.requires-dev]

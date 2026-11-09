@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -64,6 +65,14 @@ def test_short_aliases_of_code_executing_options_are_rejected(command, args):
         ("query", ["--add-to-album", "Best"]),
         ("export", ["/tmp/x", "--cleanup"]),
         ("exportdb", ["/tmp/x", "--delete-uuid=ABC"]),
+        # these write to a file the caller names, or replace files in the export folder
+        ("export", ["/tmp/x", "--overwrite"]),
+        ("export", ["/tmp/x", "--save-config", "/tmp/settings.toml"]),
+        ("export", ["/tmp/x", "--report=/tmp/report.csv"]),
+        ("exiftool", ["/tmp/x", "--report", "/tmp/report.csv"]),
+        ("compare", ["/tmp/a", "/tmp/b", "--output", "/tmp/out.csv"]),
+        ("compare", ["/tmp/a", "/tmp/b", "-o", "/tmp/out.csv"]),
+        ("compare", ["/tmp/a", "/tmp/b", "-Vo", "/tmp/out.csv"]),
     ],
 )
 def test_options_that_change_data_need_allow_write(command, args):
@@ -298,3 +307,32 @@ def test_command_list_has_no_hidden_section_when_hidden_photos_are_included():
     text = passthrough.command_help(None, allow_write=True, include_hidden=True)
     assert "--include-hidden" not in text
     assert "labels" in text.splitlines()[0]
+
+
+def test_every_option_of_the_offered_commands_has_been_reviewed():
+    """Fails when osxphotos gains or loses an option.
+
+    The guard knows options by name, so each new one has to be looked at: if it runs code it
+    belongs in BLOCKED_OPTIONS, if it changes the library or overwrites or deletes files in
+    WRITE_OPTIONS. Then add it to reviewed_options.txt.
+    """
+    import click
+    from osxphotos.cli import cli_main
+
+    def options(command):
+        params = cli_main.commands[command].params
+        names = {
+            name
+            for param in params
+            if isinstance(param, click.Option)
+            for name in (*param.opts, *param.secondary_opts)
+        }
+        return " ".join(sorted(names))
+
+    commands = sorted(passthrough.READ_COMMANDS | passthrough.WRITE_COMMANDS)
+    found = {command: options(command) for command in commands}
+    lines = (Path(__file__).parent / "reviewed_options.txt").read_text().splitlines()
+    reviewed = dict(line.split(":", 1) for line in lines)
+    for command in commands:
+        new = set(found[command].split()) ^ set(reviewed.get(command, "").split())
+        assert not new, f"{command}: review {sorted(new)}"

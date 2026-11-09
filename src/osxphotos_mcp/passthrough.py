@@ -108,15 +108,24 @@ WRITE_OPTIONS = frozenset(
         "--cleanup",
         "--delete-file",
         "--delete-uuid",
+        # replace files in the export folder, or write to a file the caller names
+        "--output",
+        "--overwrite",
+        "--report",
+        "--save-config",
     }
 )
-"""Options on read commands that change the library or delete files."""
+"""Options on read commands that change the library, or overwrite or delete files."""
+
+WRITE_SHORT_OPTIONS = {"compare": "o"}
+"""Single-letter aliases of write options, per command."""
 
 MAX_OUTPUT = 50_000
 MAX_HELP = 30_000
 TIMEOUT_SECONDS = 600
 
 _NEEDS_WRITE = "start the server with --allow-write to enable it"
+_CHANGES_DATA = "changes the library, or overwrites or deletes files"
 _NEEDS_HIDDEN = "start the server with --include-hidden to see hidden photos"
 _CRASH_LOG = "osxphotos_crash.log"
 
@@ -138,13 +147,16 @@ def check(
             if option in BLOCKED_OPTIONS:
                 raise ValueError(f"Option {option} is not allowed: it can run code.")
             if option in WRITE_OPTIONS and not allow_write:
-                raise ValueError(f"Option {option} changes or deletes data; {_NEEDS_WRITE}.")
+                raise ValueError(f"Option {option} {_CHANGES_DATA}; {_NEEDS_WRITE}.")
             if option == "--hidden" and not include_hidden:
                 raise ValueError(f"Hidden photos are left out; {_NEEDS_HIDDEN}.")
         elif arg.startswith("-") and arg[1:2].isalpha():
             blocked = set(arg[1:]) & set(BLOCKED_SHORT_OPTIONS.get(command, ""))
             if blocked:
                 raise ValueError(f"Option -{min(blocked)} is not allowed: it can run code.")
+            writes = set(arg[1:]) & set(WRITE_SHORT_OPTIONS.get(command, ""))
+            if writes and not allow_write:
+                raise ValueError(f"Option -{min(writes)} {_CHANGES_DATA}; {_NEEDS_WRITE}.")
 
 
 def build_args(

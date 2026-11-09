@@ -33,10 +33,15 @@ def _explained() -> Iterator[None]:
 
 
 def build_server(
-    library: str | None = None, allow_write: bool = False, include_hidden: bool = False
+    library: str | None = None,
+    allow_write: bool = False,
+    include_hidden: bool = False,
+    preload: bool = False,
 ) -> MCPServer:
     """Create the server for one Photos library (the system library when `library` is None)."""
     photos = Library(library, include_hidden=include_hidden)
+    if preload:
+        photos.preload()
     server = MCPServer(
         "osxphotos",
         title="Apple Photos (osxphotos)",
@@ -104,9 +109,11 @@ def build_server(
         """Copy photos to a folder, using the edited version where one exists.
 
         destination is an absolute folder path. Never overwrites existing files. Photos that
-        are not downloaded from iCloud or cannot be written are reported as skipped. To fetch
-        those from iCloud, or for more control, use run_osxphotos: command "export" with args
-        [destination, "--uuid", uuid, "--download-missing"].
+        are not downloaded from iCloud, are in Recently Deleted or cannot be written are
+        reported as skipped; an edited photo exported as its original is reported under
+        warnings. To fetch photos from iCloud, or for more control, use run_osxphotos: command
+        "export" with args [destination, "--uuid", uuid, "--download-missing"], and "--update"
+        when exporting into that folder again.
         """
         with _explained():
             return photos.export(uuids, destination)

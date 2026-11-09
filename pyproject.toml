@@ -1,6 +1,6 @@
 [project]
 name = "osxphotos-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "A slim MCP server for Apple Photos, built on osxphotos"
 readme = "README.md"
 license = "MIT"
@@ -18,8 +18,10 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 dependencies = [
-    "mcp>=2.3.0",
-    "osxphotos>=0.78.1",
+    "mcp>=2.3.0,<3",
+    # Exactly the version whose command line options the guard in passthrough.py was checked
+    # against. To raise it, run the tests: one of them lists the options that need a look.
+    "osxphotos==0.78.1",
 ]
 
 [project.urls]
