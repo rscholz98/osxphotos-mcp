@@ -86,15 +86,18 @@ class Library:
         return _details(photo)
 
     def list_albums(self) -> list[dict[str, Any]]:
+        db = self.db()
         albums = [
             _compact(
                 {
                     "title": album.title,
                     "folder": "/".join(album.folder_names),
                     "count": len(album.photos),
+                    "shared": shared or None,
                 }
             )
-            for album in self.db().album_info
+            for shared, infos in ((False, db.album_info), (True, db.album_info_shared))
+            for album in infos
         ]
         return sorted(albums, key=lambda a: (a.get("folder", ""), a["title"]))
 

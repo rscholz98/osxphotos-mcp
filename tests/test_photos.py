@@ -199,3 +199,10 @@ def test_unreadable_library_error_explains_full_disk_access(monkeypatch):
     monkeypatch.setattr("osxphotos.PhotosDB", denied)
     with pytest.raises(RuntimeError, match="Full Disk Access"):
         Library(None).db()
+
+
+def test_list_albums_includes_shared_albums_and_marks_them(shared_library_path):
+    assert Library(shared_library_path).list_albums() == [
+        {"title": "Photo Shoot", "count": 1},
+        {"title": "osxphotos", "count": 2, "shared": True},
+    ]

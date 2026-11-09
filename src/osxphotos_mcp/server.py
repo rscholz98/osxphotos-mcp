@@ -78,7 +78,7 @@ def build_server(library: str | None = None, allow_write: bool = False) -> MCPSe
 
     @server.tool(annotations=READ_ONLY)
     def list_albums() -> dict[str, Any]:
-        """All albums with their folder and number of photos."""
+        """All albums, including shared albums, with their folder and number of photos."""
         with _explained():
             return {"albums": photos.list_albums()}
 
