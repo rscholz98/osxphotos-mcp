@@ -413,11 +413,14 @@ def test_searchable_text_is_built_once_for_each_photo(library_path, monkeypatch)
 
     built = []
     build = photos._searchable_text
-    monkeypatch.setattr(photos, "_searchable_text", lambda photo: built.append(1) or build(photo))
+    monkeypatch.setattr(
+        photos, "_searchable_text", lambda photo: built.append(photo) or build(photo)
+    )
     lib = Library(library_path)
     assert lib.search(text="pumpkin")["total"] == lib.search(text="pumpkin")["total"]
     lib.search(text="wedding")
-    assert len(built) == 13
+    # Counted per photo object: a library from an earlier test may still be preparing its own.
+    assert len({id(photo) for photo in built}) == len(built) >= 13
 
 
 def test_tool_calls_use_the_library_one_at_a_time(library_path, monkeypatch):
