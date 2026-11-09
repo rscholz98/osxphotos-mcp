@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 READ_COMMANDS = frozenset(
     {
@@ -55,6 +56,9 @@ LIBRARY_COMMANDS = frozenset(
 )
 """Commands that take `--library`, so the server's configured library can be passed on."""
 
+HIDDEN_COMMANDS = frozenset({"add-locations", "export", "push-exif", "query", "sync"})
+"""Commands that take `--not-hidden`, so hidden photos can be left out of their results."""
+
 BLOCKED_OPTIONS = frozenset(
     {
         # run a shell command, a Python file, or a Mako template (which embeds Python)
@@ -102,13 +106,19 @@ MAX_HELP = 30_000
 TIMEOUT_SECONDS = 600
 
 _NEEDS_WRITE = "start the server with --allow-write to enable it"
+_NEEDS_HIDDEN = "start the server with --include-hidden to see hidden photos"
+_CRASH_LOG = "osxphotos_crash.log"
 
 
-def check(command: str, args: list[str], *, allow_write: bool) -> None:
+def check(
+    command: str, args: list[str], *, allow_write: bool, include_hidden: bool = False
+) -> None:
     """Raise `ValueError` if this command line must not be run."""
     _check_command(command)
     if command in WRITE_COMMANDS and not allow_write:
         raise ValueError(f"'{command}' changes the Photos library; {_NEEDS_WRITE}.")
+    if command == "dump" and not include_hidden:
+        raise ValueError(f"'dump' cannot leave out hidden photos; use query, or {_NEEDS_HIDDEN}.")
     for arg in args:
         if "function:" in arg:
             raise ValueError("Template functions ('function:') are not allowed: they run code.")
@@ -118,18 +128,25 @@ def check(command: str, args: list[str], *, allow_write: bool) -> None:
                 raise ValueError(f"Option {option} is not allowed: it can run code.")
             if option in WRITE_OPTIONS and not allow_write:
                 raise ValueError(f"Option {option} changes or deletes data; {_NEEDS_WRITE}.")
+            if option == "--hidden" and not include_hidden:
+                raise ValueError(f"Hidden photos are left out; {_NEEDS_HIDDEN}.")
         elif arg.startswith("-") and arg[1:2].isalpha():
             blocked = set(arg[1:]) & set(BLOCKED_SHORT_OPTIONS.get(command, ""))
             if blocked:
                 raise ValueError(f"Option -{min(blocked)} is not allowed: it can run code.")
 
 
-def build_args(command: str, args: list[str], *, library: str | None) -> list[str]:
-    """Prepend the command and, where it applies, the server's configured library."""
-    explicit = any(arg.split("=", 1)[0] in ("--library", "--db") for arg in args)
-    if library and command in LIBRARY_COMMANDS and not explicit:
-        return [command, "--library", library, *args]
-    return [command, *args]
+def build_args(
+    command: str, args: list[str], *, library: str | None, include_hidden: bool = False
+) -> list[str]:
+    """Prepend the command and, where they apply, the configured library and hidden filter."""
+    built = [command]
+    explicit_library = any(arg.split("=", 1)[0] in ("--library", "--db") for arg in args)
+    if library and command in LIBRARY_COMMANDS and not explicit_library:
+        built += ["--library", library]
+    if command in HIDDEN_COMMANDS and not include_hidden and "--not-hidden" not in args:
+        built.append("--not-hidden")
+    return built + args
 
 
 def truncate(text: str, limit: int = MAX_OUTPUT) -> str:
@@ -138,10 +155,18 @@ def truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     return f"{text[:limit]}\n[output truncated: {len(text) - limit} more characters]"
 
 
-def run(command: str, args: list[str], *, allow_write: bool, library: str | None = None) -> str:
+def run(
+    command: str,
+    args: list[str],
+    *,
+    allow_write: bool,
+    library: str | None = None,
+    include_hidden: bool = False,
+) -> str:
     """Run one osxphotos command and return its output."""
-    check(command, args, allow_write=allow_write)
-    return truncate(_osxphotos(build_args(command, args, library=library)))
+    check(command, args, allow_write=allow_write, include_hidden=include_hidden)
+    built = build_args(command, args, library=library, include_hidden=include_hidden)
+    return truncate(_osxphotos(built))
 
 
 def command_help(command: str | None, *, allow_write: bool, topic: str | None = None) -> str:
@@ -187,6 +212,8 @@ def _check_command(command: str) -> None:
 
 
 def _osxphotos(args: list[str]) -> str:
+    crash_log = Path(_CRASH_LOG)
+    had_crash_log = crash_log.exists()
     try:
         result = subprocess.run(
             [sys.executable, "-m", "osxphotos", *args],
@@ -199,7 +226,16 @@ def _osxphotos(args: list[str]) -> str:
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"osxphotos {args[0]} timed out after {TIMEOUT_SECONDS}s.") from None
+    finally:
+        # osxphotos writes its crash log to the working directory, which is the user's project
+        if not had_crash_log:
+            crash_log.unlink(missing_ok=True)
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
+        detail = _tidy(result.stderr) or _tidy(result.stdout)
         raise RuntimeError(truncate(detail) or f"osxphotos exited with code {result.returncode}.")
-    return result.stdout.strip() or result.stderr.strip()
+    return _tidy(result.stdout) or _tidy(result.stderr)
+
+
+def _tidy(text: str) -> str:
+    """Drop the padding osxphotos adds to the end of lines."""
+    return "\n".join(line.rstrip() for line in text.splitlines()).strip()

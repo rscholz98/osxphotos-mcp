@@ -58,7 +58,7 @@ If the client cannot find `uvx`, use its full path (`which uvx`).
 
 | Tool | What it does |
 |---|---|
-| `search_photos` | Find photos by text, date range, album, person, keyword, place, favorite or media type |
+| `search_photos` | Find photos by text, date range, album, person, keyword, place, favorite or media type, with paging |
 | `get_photo` | Full details of one photo: metadata, albums, labels, camera, location, file paths |
 | `list_albums` | Albums, including shared ones, with folder and photo count |
 | `list_people_and_keywords` | People and keywords with photo counts |
@@ -76,10 +76,12 @@ Add these after `osxphotos-mcp` in the command or `args`:
 |---|---|
 | `--library PATH` | Use this Photos library instead of the system library |
 | `--allow-write` | Enable commands that change your library: `add-locations`, `batch-edit`, `import`, `push-exif`, `sync`, `timewarp` |
+| `--include-hidden` | Include photos you have hidden in Photos |
 
 ## Safety
 
 - Nothing changes your Photos library unless you start the server with `--allow-write`.
+- Photos you have hidden in Photos stay out of search and command results unless you start the server with `--include-hidden`.
 - Options that run code (`--post-command`, `--post-function`, `--query-eval` and similar) are always refused, as are the interactive commands.
 - `export` writes files wherever the model points it, and the option filter is a best effort, not a sandbox. Give this server to assistants you would trust with the osxphotos command line.
 

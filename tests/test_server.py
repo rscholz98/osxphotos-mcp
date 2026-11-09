@@ -51,8 +51,8 @@ def test_search_photos_returns_matches_as_structured_data(library_path):
 
 def test_search_photos_needs_no_arguments(library_path):
     result = call(build_server(library_path), "search_photos")
-    assert result.structured_content["total"] == 14
-    assert len(result.structured_content["photos"]) == 14
+    assert result.structured_content["total"] == 13
+    assert len(result.structured_content["photos"]) == 13
 
 
 def test_get_photo_with_unknown_uuid_is_a_tool_error(library_path):
@@ -159,3 +159,49 @@ anyio.run(run)
     assert done.returncode == 0, done.stderr
     assert "Error" not in done.stderr
     assert "Exception ignored" not in done.stderr
+
+
+def test_text_tools_return_plain_text_only(library_path):
+    result = call(build_server(library_path), "run_osxphotos", {"command": "albums"})
+    assert result.structured_content is None
+    assert result.content[0].text.startswith("albums:")
+
+
+def test_search_photos_can_page_and_includes_hidden_only_on_request(library_path):
+    server = build_server(library_path, include_hidden=True)
+    result = call(server, "search_photos", {"limit": 1, "offset": 13})
+    assert result.structured_content["total"] == 14
+    assert len(result.structured_content["photos"]) == 1
+
+
+def test_run_osxphotos_leaves_out_hidden_photos(library_path):
+    result = call(
+        build_server(library_path), "run_osxphotos", {"command": "query", "args": ["--count"]}
+    )
+    assert result.content[0].text == "13"
+
+
+def test_server_reports_its_name_and_version():
+    from importlib.metadata import version
+
+    async def run():
+        async with Client(build_server()) as client:
+            return client.server_info
+
+    info = anyio.run(run)
+    assert info.title == "Apple Photos (osxphotos)"
+    assert info.version == version("osxphotos-mcp")
+
+
+def test_include_hidden_flag_reaches_the_server(library_path):
+    command = StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-c",
+            "from osxphotos_mcp import main; main()",
+            "--library",
+            library_path,
+            "--include-hidden",
+        ],
+    )
+    assert call(command, "search_photos").structured_content["total"] == 14

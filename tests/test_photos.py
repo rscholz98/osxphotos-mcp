@@ -7,7 +7,8 @@ from osxphotos_mcp.photos import Library
 
 PUMPKINS2 = "D79B8D77-BFFC-460B-9312-034F2877D35B"
 WEDDING = "E9BC5C36-7CD1-40A1-A72B-8B8FAC227D51"
-NOT_DOWNLOADED = "A1DD1F98-2ECD-431F-9AC9-5AFEFE2D3A5C"
+NOT_DOWNLOADED = "A1DD1F98-2ECD-431F-9AC9-5AFEFE2D3A5C"  # Pumpkins4.jpg, which is also hidden
+TRASHED = "71E3E212-00EB-430D-8A63-5E294B268554"
 
 
 @pytest.fixture(scope="module")
@@ -21,7 +22,7 @@ def filenames(result: dict) -> set[str]:
 
 def test_search_without_filters_returns_everything_newest_first(lib):
     result = lib.search()
-    assert result["total"] == 14
+    assert result["total"] == 13
     assert result["photos"][0]["filename"] == "IMG_3092.heic"
     assert result["photos"][0]["date"].startswith("2020-09-19T")
     assert result["photos"][-1]["filename"] == "IMG_1693.tif"
@@ -29,12 +30,12 @@ def test_search_without_filters_returns_everything_newest_first(lib):
 
 def test_search_limit_caps_the_list_but_not_the_total(lib):
     result = lib.search(limit=2)
-    assert result["total"] == 14
+    assert result["total"] == 13
     assert len(result["photos"]) == 2
 
 
 def test_search_limit_is_capped_at_100(lib):
-    assert lib.search(limit=100_000)["total"] == 14
+    assert lib.search(limit=100_000)["total"] == 13
     with pytest.raises(ValueError, match="limit"):
         lib.search(limit=0)
 
@@ -48,12 +49,12 @@ def test_search_by_person_ignores_case_and_hides_unknown_faces(lib):
 def test_search_date_range_uses_the_date_shown_in_photos_and_includes_the_end_day(lib):
     # Taken 15:35-16:09 at UTC-4: the 28th where they were taken, whatever this machine's timezone.
     result = lib.search(from_date="2018-09-28", to_date="2018-09-28")
-    assert result["total"] == 4
+    assert result["total"] == 3
 
 
 def test_search_date_with_utc_offset_is_compared_as_an_absolute_time(lib):
     result = lib.search(from_date="2018-09-28T19:00:00+00:00", to_date="2018-09-28T20:00:00+00:00")
-    assert filenames(result) == {"Pumkins1.jpg", "Pumpkins4.jpg"}
+    assert filenames(result) == {"Pumkins1.jpg"}
 
 
 def test_search_from_date_excludes_older_photos(lib):
@@ -79,11 +80,11 @@ def test_search_by_place(lib):
 
 def test_search_by_favorite(lib):
     assert filenames(lib.search(favorite=True)) == {"wedding.jpg"}
-    assert lib.search(favorite=False)["total"] == 13
+    assert lib.search(favorite=False)["total"] == 12
 
 
 def test_search_by_media_type(lib):
-    assert lib.search(media_type="photo")["total"] == 14
+    assert lib.search(media_type="photo")["total"] == 13
     assert lib.search(media_type="video")["total"] == 0
 
 
@@ -92,7 +93,6 @@ def test_search_text_matches_title_description_and_album(lib):
     assert filenames(lib.search(text="pumpkin")) == {
         "Pumpkins3.jpg",
         "Pumkins2.jpg",
-        "Pumpkins4.jpg",
         "Pumkins1.jpg",
     }
 
@@ -179,17 +179,40 @@ def test_export_does_not_overwrite_existing_files(lib, tmp_path):
     assert len(list(tmp_path.iterdir())) == 2
 
 
-def test_database_is_loaded_once_and_reloaded_when_the_library_changes(library_path):
+@pytest.fixture
+def touch_database(library_path):
+    """Make the library look changed on disk, and undo that afterwards."""
+    database = Path(Library(library_path).db().db_path)
+    stat = database.stat()
+
+    def touch():
+        os.utime(database, (stat.st_atime, database.stat().st_mtime + 10))
+
+    yield touch
+    os.utime(database, (stat.st_atime, stat.st_mtime))
+
+
+def test_database_is_not_reloaded_for_every_change_on_disk(library_path, touch_database):
+    # Photos touches its database several times a minute; reloading each time costs seconds.
     lib = Library(library_path)
     first = lib.db()
+    touch_database()
     assert lib.db() is first
-    database = Path(first.db_path)
-    stat = database.stat()
-    os.utime(database, (stat.st_atime, stat.st_mtime + 10))
-    try:
-        assert lib.db() is not first
-    finally:
-        os.utime(database, (stat.st_atime, stat.st_mtime))
+
+
+def test_database_is_reloaded_once_the_loaded_copy_is_old_enough(library_path, touch_database):
+    lib = Library(library_path, reload_after=0)
+    first = lib.db()
+    assert lib.db() is first
+    touch_database()
+    assert lib.db() is not first
+
+
+def test_refresh_reloads_the_database_on_next_use(library_path):
+    lib = Library(library_path)
+    first = lib.db()
+    lib.refresh()
+    assert lib.db() is not first
 
 
 def test_unreadable_library_error_explains_full_disk_access(monkeypatch):
@@ -206,3 +229,69 @@ def test_list_albums_includes_shared_albums_and_marks_them(shared_library_path):
         {"title": "Photo Shoot", "count": 1},
         {"title": "osxphotos", "count": 2, "shared": True},
     ]
+
+
+def test_search_leaves_out_hidden_photos(lib):
+    assert "Pumpkins4.jpg" not in filenames(lib.search(limit=100))
+
+
+def test_search_includes_hidden_photos_when_the_library_is_opened_that_way(library_path):
+    result = Library(library_path, include_hidden=True).search(limit=100)
+    assert result["total"] == 14
+    assert "Pumpkins4.jpg" in filenames(result)
+
+
+def test_search_finds_an_album_inside_a_folder_by_title_or_by_path(lib):
+    assert lib.search(album="AlbumInFolder")["total"] == 2
+    assert lib.search(album="folder1/subfolder2/albuminfolder")["total"] == 2
+
+
+def test_search_finds_an_album_with_a_slash_in_its_name(lib):
+    assert lib.search(album="2019-10/11 Paris Clermont")["total"] == 1
+
+
+def test_search_finds_photos_in_all_albums_that_share_a_title(lib):
+    assert filenames(lib.search(album="Test Album")) == {"Pumkins2.jpg", "Pumkins1.jpg"}
+
+
+def test_search_by_unknown_album_says_so(lib):
+    with pytest.raises(ValueError, match="No album named 'Nope'"):
+        lib.search(album="Nope")
+
+
+def test_search_by_shared_album(shared_library_path):
+    assert Library(shared_library_path).search(album="osxphotos")["total"] == 2
+
+
+def test_search_text_with_several_words_requires_all_of_them(lib):
+    assert filenames(lib.search(text="girl pumpkin")) == {"Pumkins2.jpg", "Pumkins1.jpg"}
+
+
+def test_search_text_of_only_spaces_is_no_filter(lib):
+    assert lib.search(text="   ")["total"] == 13
+
+
+def test_search_offset_pages_through_results(lib):
+    assert lib.search(limit=2, offset=2)["photos"] == lib.search(limit=4)["photos"][2:]
+    assert lib.search(offset=13) == {"total": 13, "photos": []}
+    with pytest.raises(ValueError, match="offset"):
+        lib.search(offset=-1)
+
+
+def test_get_photo_says_when_a_photo_is_in_recently_deleted(lib):
+    assert lib.get_photo(TRASHED)["in_trash"] is True
+    assert "in_trash" not in lib.get_photo(WEDDING)
+
+
+def test_export_reports_photos_that_could_not_be_written_and_carries_on(lib, tmp_path):
+    read_only = tmp_path / "read-only"
+    read_only.mkdir(mode=0o500)
+    result = lib.export([PUMPKINS2, WEDDING], str(read_only))
+    assert result["exported"] == []
+    assert [s["uuid"] for s in result["skipped"]] == [PUMPKINS2, WEDDING]
+    assert all(s["reason"].startswith("failed: ") for s in result["skipped"])
+
+
+def test_export_needs_an_absolute_destination(lib):
+    with pytest.raises(ValueError, match="absolute"):
+        lib.export([PUMPKINS2], "exports")

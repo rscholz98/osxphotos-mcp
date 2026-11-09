@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+import time
 from pathlib import Path
 from typing import Any, Literal
 
 import osxphotos
 
 MAX_LIMIT = 100
+RELOAD_AFTER_SECONDS = 300
 UNKNOWN_PERSON = "_UNKNOWN_"
 
 _NO_ACCESS = (
@@ -19,17 +21,30 @@ _NO_ACCESS = (
 
 
 class Library:
-    """A Photos library that is loaded on first use and reloaded when it changes on disk."""
+    """A Photos library, loaded on first use and reloaded when it has changed on disk.
 
-    def __init__(self, path: str | None = None):
+    Photos touches its database several times a minute and loading a large library takes
+    seconds, so a loaded copy is kept for at least `reload_after` seconds.
+    """
+
+    def __init__(
+        self,
+        path: str | None = None,
+        *,
+        include_hidden: bool = False,
+        reload_after: float = RELOAD_AFTER_SECONDS,
+    ):
         self.path = path
+        self.include_hidden = include_hidden
+        self.reload_after = reload_after
         self._db: osxphotos.PhotosDB | None = None
         self._stamp: float | None = None
+        self._loaded_at = 0.0
         self._lock = threading.Lock()
 
     def db(self) -> osxphotos.PhotosDB:
         with self._lock:
-            if self._db is None or self._stamp != _modified(self._db.db_path):
+            if self._db is None or self._is_outdated(self._db):
                 try:
                     self._db = osxphotos.PhotosDB(dbfile=self.path)
                 except FileNotFoundError:
@@ -37,7 +52,17 @@ class Library:
                 except OSError as error:
                     raise RuntimeError(_NO_ACCESS.format(error=error)) from error
                 self._stamp = _modified(self._db.db_path)
+                self._loaded_at = time.monotonic()
             return self._db
+
+    def refresh(self) -> None:
+        """Reload the library the next time it is used, for example after changing it."""
+        with self._lock:
+            self._db = None
+
+    def _is_outdated(self, db: osxphotos.PhotosDB) -> bool:
+        old_enough = time.monotonic() - self._loaded_at >= self.reload_after
+        return old_enough and self._stamp != _modified(db.db_path)
 
     def search(
         self,
@@ -52,12 +77,15 @@ class Library:
         favorite: bool | None = None,
         media_type: Literal["photo", "video"] | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> dict[str, Any]:
         if limit < 1:
             raise ValueError("limit must be at least 1")
+        if offset < 0:
+            raise ValueError("offset must not be negative")
         start, end = _parse_date(from_date), _parse_date(to_date, end=True)
+        db = self.db()
         options = osxphotos.QueryOptions(
-            album=[album] if album else None,
             person=[person] if person else None,
             keyword=[keyword] if keyword else None,
             place=[place] if place else None,
@@ -65,18 +93,22 @@ class Library:
             not_favorite=True if favorite is False else None,
             photos=media_type != "video",
             movies=media_type != "photo",
+            not_hidden=None if self.include_hidden else True,
             ignore_case=True,
         )
-        photos = self.db().query(options)
+        photos = db.query(options)
+        if album:
+            members = _album_members(db, album)
+            photos = [p for p in photos if p.uuid in members]
         if start:
             photos = [p for p in photos if _comparable(p.date, start) >= start]
         if end:
             photos = [p for p in photos if _comparable(p.date, end) < end]
-        if text:
-            needle = text.casefold()
-            photos = [p for p in photos if needle in _searchable_text(p)]
+        words = text.casefold().split() if text else []
+        if words:
+            photos = [p for p in photos if _contains_all(_searchable_text(p), words)]
         photos.sort(key=lambda p: p.date, reverse=True)
-        shown = photos[: min(limit, MAX_LIMIT)]
+        shown = photos[offset : offset + min(limit, MAX_LIMIT)]
         return {"total": len(photos), "photos": [_summary(p) for p in shown]}
 
     def get_photo(self, uuid: str) -> dict[str, Any]:
@@ -108,6 +140,8 @@ class Library:
 
     def export(self, uuids: list[str], destination: str) -> dict[str, Any]:
         folder = Path(destination).expanduser()
+        if not folder.is_absolute():
+            raise ValueError("destination must be an absolute path (it may start with ~).")
         folder.mkdir(parents=True, exist_ok=True)
         db = self.db()
         exported: list[str] = []
@@ -116,13 +150,32 @@ class Library:
             photo = db.get_photo(uuid)
             if photo is None:
                 skipped.append({"uuid": uuid, "reason": "not found"})
-            elif photo.path_edited:
-                exported += photo.export(str(folder), edited=True)
-            elif photo.path:
-                exported += photo.export(str(folder))
-            else:
+            elif not (photo.path_edited or photo.path):
                 skipped.append({"uuid": uuid, "reason": "not downloaded from iCloud"})
+            else:
+                try:
+                    exported += photo.export(str(folder), edited=bool(photo.path_edited))
+                except Exception as error:  # osxphotos raises its own, unrelated error types
+                    skipped.append({"uuid": uuid, "reason": f"failed: {error}"})
         return {"exported": exported, "skipped": skipped}
+
+
+def _album_members(db: osxphotos.PhotosDB, name: str) -> set[str]:
+    """UUIDs of the photos in every album with this title or folder path, ignoring case."""
+    wanted = name.casefold()
+    albums = [
+        album
+        for album in (*db.album_info, *db.album_info_shared)
+        if wanted
+        in (album.title.casefold(), "/".join([*album.folder_names, album.title]).casefold())
+    ]
+    if not albums:
+        raise ValueError(f"No album named '{name}'. Call list_albums to see the album names.")
+    return {photo.uuid for album in albums for photo in album.photos}
+
+
+def _contains_all(text: str, words: list[str]) -> bool:
+    return all(word in text for word in words)
 
 
 def _modified(db_path: str) -> float:
@@ -231,6 +284,7 @@ def _details(photo: osxphotos.PhotoInfo) -> dict[str, Any]:
             "camera": camera,
             "edited": photo.hasadjustments,
             "downloaded": not photo.ismissing,
+            "in_trash": photo.intrash or None,
             "path": photo.path,
             "path_edited": photo.path_edited,
         }

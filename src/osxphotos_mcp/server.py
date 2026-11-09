@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from importlib.metadata import version
 from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -31,10 +32,17 @@ def _explained() -> Iterator[None]:
         raise ToolError(str(error)) from error
 
 
-def build_server(library: str | None = None, allow_write: bool = False) -> MCPServer:
+def build_server(
+    library: str | None = None, allow_write: bool = False, include_hidden: bool = False
+) -> MCPServer:
     """Create the server for one Photos library (the system library when `library` is None)."""
-    photos = Library(library)
-    server = MCPServer("osxphotos", instructions=INSTRUCTIONS)
+    photos = Library(library, include_hidden=include_hidden)
+    server = MCPServer(
+        "osxphotos",
+        title="Apple Photos (osxphotos)",
+        version=version("osxphotos-mcp"),
+        instructions=INSTRUCTIONS,
+    )
 
     @server.tool(annotations=READ_ONLY)
     def search_photos(
@@ -48,13 +56,15 @@ def build_server(library: str | None = None, allow_write: bool = False) -> MCPSe
         favorite: bool | None = None,
         media_type: Literal["photo", "video"] | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Find photos and videos, newest first. All filters are optional and combine with AND.
 
-        text matches title, description, filename, people, keywords, albums, labels and place.
-        Dates are ISO (YYYY-MM-DD, optionally with a time) in the photo's local time; to_date
-        includes that whole day. album, person and keyword are exact names, ignoring case.
-        Returns the total number of matches and up to `limit` (max 100) of them.
+        text: every word must occur in the title, description, filename, people, keywords,
+        albums, labels or place. Dates are ISO (YYYY-MM-DD, optionally with a time) in the
+        photo's local time; to_date includes that whole day. album, person and keyword are
+        exact names, ignoring case. Returns the total number of matches and up to `limit`
+        (max 100) of them, starting at `offset`.
         """
         with _explained():
             return photos.search(
@@ -68,6 +78,7 @@ def build_server(library: str | None = None, allow_write: bool = False) -> MCPSe
                 favorite=favorite,
                 media_type=media_type,
                 limit=limit,
+                offset=offset,
             )
 
     @server.tool(annotations=READ_ONLY)
@@ -92,13 +103,15 @@ def build_server(library: str | None = None, allow_write: bool = False) -> MCPSe
     def export_photos(uuids: list[str], destination: str) -> dict[str, Any]:
         """Copy photos to a folder, using the edited version where one exists.
 
-        Never overwrites existing files. Photos that are not downloaded from iCloud are
-        reported as skipped. For more control, use run_osxphotos with the export command.
+        destination is an absolute folder path. Never overwrites existing files. Photos that
+        are not downloaded from iCloud or cannot be written are reported as skipped. To fetch
+        those from iCloud, or for more control, use run_osxphotos: command "export" with args
+        [destination, "--uuid", uuid, "--download-missing"].
         """
         with _explained():
             return photos.export(uuids, destination)
 
-    @server.tool(annotations=READ_ONLY)
+    @server.tool(annotations=READ_ONLY, structured_output=False)
     def osxphotos_help(command: str | None = None, topic: str | None = None) -> str:
         """Help for one osxphotos command, or the list of available commands if none is given.
 
@@ -107,14 +120,27 @@ def build_server(library: str | None = None, allow_write: bool = False) -> MCPSe
         with _explained():
             return passthrough.command_help(command, allow_write=allow_write, topic=topic)
 
-    @server.tool(annotations=ToolAnnotations(destructive_hint=allow_write, open_world_hint=False))
+    @server.tool(
+        annotations=ToolAnnotations(destructive_hint=allow_write, open_world_hint=False),
+        structured_output=False,
+    )
     def run_osxphotos(command: str, args: list[str] | None = None) -> str:
         """Run an osxphotos command line command and return its output.
 
         Pass options as separate items, for example command "query" with args
         ["--no-location", "--json"]. Call osxphotos_help first to see a command's options.
         """
-        with _explained():
-            return passthrough.run(command, args or [], allow_write=allow_write, library=library)
+        try:
+            with _explained():
+                return passthrough.run(
+                    command,
+                    args or [],
+                    allow_write=allow_write,
+                    library=library,
+                    include_hidden=include_hidden,
+                )
+        finally:
+            if command in passthrough.WRITE_COMMANDS:
+                photos.refresh()
 
     return server
