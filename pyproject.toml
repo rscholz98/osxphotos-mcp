@@ -1,0 +1,46 @@
+[project]
+name = "osxphotos-mcp"
+version = "0.1.0"
+description = "A slim MCP server for Apple Photos, built on osxphotos"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "rscholz", email = "102604185+rscholz98@users.noreply.github.com" }
+]
+requires-python = ">=3.10"
+keywords = ["mcp", "osxphotos", "apple-photos", "macos"]
+classifiers = [
+    "Environment :: MacOS X",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "mcp>=2.3.0",
+    "osxphotos>=0.78.1",
+]
+
+[project.urls]
+Repository = "https://github.com/rscholz98/osxphotos-mcp"
+
+[project.scripts]
+osxphotos-mcp = "osxphotos_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "PLW1510"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

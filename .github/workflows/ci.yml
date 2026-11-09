@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Fetch the osxphotos test library
+        run: |
+          git clone --depth 1 --branch v0.78.1 --filter=blob:none --sparse \
+            https://github.com/RhetTbull/osxphotos.git "$RUNNER_TEMP/osxphotos"
+          git -C "$RUNNER_TEMP/osxphotos" sparse-checkout set tests/Test-13.0.0.photoslibrary
+          echo "OSXPHOTOS_MCP_TEST_LIBRARY=$RUNNER_TEMP/osxphotos/tests/Test-13.0.0.photoslibrary" >> "$GITHUB_ENV"
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest

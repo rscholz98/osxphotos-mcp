@@ -1,0 +1,201 @@
+import os
+from pathlib import Path
+
+import pytest
+
+from osxphotos_mcp.photos import Library
+
+PUMPKINS2 = "D79B8D77-BFFC-460B-9312-034F2877D35B"
+WEDDING = "E9BC5C36-7CD1-40A1-A72B-8B8FAC227D51"
+NOT_DOWNLOADED = "A1DD1F98-2ECD-431F-9AC9-5AFEFE2D3A5C"
+
+
+@pytest.fixture(scope="module")
+def lib(library_path) -> Library:
+    return Library(library_path)
+
+
+def filenames(result: dict) -> set[str]:
+    return {p["filename"] for p in result["photos"]}
+
+
+def test_search_without_filters_returns_everything_newest_first(lib):
+    result = lib.search()
+    assert result["total"] == 14
+    assert result["photos"][0]["filename"] == "IMG_3092.heic"
+    assert result["photos"][0]["date"].startswith("2020-09-19T")
+    assert result["photos"][-1]["filename"] == "IMG_1693.tif"
+
+
+def test_search_limit_caps_the_list_but_not_the_total(lib):
+    result = lib.search(limit=2)
+    assert result["total"] == 14
+    assert len(result["photos"]) == 2
+
+
+def test_search_limit_is_capped_at_100(lib):
+    assert lib.search(limit=100_000)["total"] == 14
+    with pytest.raises(ValueError, match="limit"):
+        lib.search(limit=0)
+
+
+def test_search_by_person_ignores_case_and_hides_unknown_faces(lib):
+    result = lib.search(person="katie")
+    assert filenames(result) == {"Pumpkins3.jpg", "Pumkins2.jpg", "Pumkins1.jpg"}
+    assert all("_UNKNOWN_" not in p["people"] for p in result["photos"])
+
+
+def test_search_date_range_uses_the_date_shown_in_photos_and_includes_the_end_day(lib):
+    # Taken 15:35-16:09 at UTC-4: the 28th where they were taken, whatever this machine's timezone.
+    result = lib.search(from_date="2018-09-28", to_date="2018-09-28")
+    assert result["total"] == 4
+
+
+def test_search_date_with_utc_offset_is_compared_as_an_absolute_time(lib):
+    result = lib.search(from_date="2018-09-28T19:00:00+00:00", to_date="2018-09-28T20:00:00+00:00")
+    assert filenames(result) == {"Pumkins1.jpg", "Pumpkins4.jpg"}
+
+
+def test_search_from_date_excludes_older_photos(lib):
+    assert filenames(lib.search(from_date="2020-09-01")) == {"IMG_3092.heic"}
+
+
+def test_search_rejects_a_date_that_is_not_iso_format(lib):
+    with pytest.raises(ValueError, match="ISO"):
+        lib.search(from_date="last summer")
+
+
+def test_search_by_album(lib):
+    assert lib.search(album="Pumpkin Farm")["total"] == 3
+
+
+def test_search_by_keyword(lib):
+    assert filenames(lib.search(keyword="wedding")) == {"Tulips.jpg", "wedding.jpg"}
+
+
+def test_search_by_place(lib):
+    assert filenames(lib.search(place="Adelaide")) == {"IMG_4547.jpg"}
+
+
+def test_search_by_favorite(lib):
+    assert filenames(lib.search(favorite=True)) == {"wedding.jpg"}
+    assert lib.search(favorite=False)["total"] == 13
+
+
+def test_search_by_media_type(lib):
+    assert lib.search(media_type="photo")["total"] == 14
+    assert lib.search(media_type="video")["total"] == 0
+
+
+def test_search_text_matches_title_description_and_album(lib):
+    assert filenames(lib.search(text="TULIPS")) == {"Tulips.jpg"}
+    assert filenames(lib.search(text="pumpkin")) == {
+        "Pumpkins3.jpg",
+        "Pumkins2.jpg",
+        "Pumpkins4.jpg",
+        "Pumkins1.jpg",
+    }
+
+
+def test_search_combines_filters(lib):
+    assert filenames(lib.search(text="pumpkin", person="Suzy")) == {
+        "Pumpkins3.jpg",
+        "Pumkins1.jpg",
+    }
+
+
+def test_search_result_omits_empty_fields(lib):
+    newest = lib.search(limit=1)["photos"][0]
+    assert set(newest) == {"uuid", "filename", "date"}
+
+
+def test_get_photo_returns_details(lib):
+    photo = lib.get_photo(WEDDING)
+    assert photo["filename"] == "wedding.jpg"
+    assert photo["description"] == "Bride Wedding day"
+    assert photo["people"] == ["Maria"]
+    assert set(photo["albums"]) == {"AlbumInFolder", "I have a deleted twin"}
+    assert photo["favorite"] is True
+    assert photo["media_type"] == "photo"
+    assert Path(photo["path"]).is_file()
+    assert Path(photo["path_edited"]).is_file()
+
+
+def test_get_photo_includes_camera_data(lib):
+    newest = lib.search(limit=1)["photos"][0]
+    camera = lib.get_photo(newest["uuid"])["camera"]
+    assert camera["model"] == "iPhone 6s"
+    assert camera["iso"] == 25
+
+
+def test_get_photo_reports_a_photo_that_is_not_downloaded(lib):
+    photo = lib.get_photo(NOT_DOWNLOADED)
+    assert photo["downloaded"] is False
+    assert "path" not in photo
+
+
+def test_get_photo_with_unknown_uuid_raises(lib):
+    with pytest.raises(ValueError, match="No photo"):
+        lib.get_photo("nope")
+
+
+def test_list_albums_reports_folder_and_count(lib):
+    albums = lib.list_albums()
+    assert {"title": "AlbumInFolder", "folder": "Folder1/SubFolder2", "count": 2} in albums
+    assert {"title": "Pumpkin Farm", "count": 3} in albums
+
+
+def test_people_and_keywords_are_counted_without_unknown_or_unused(lib):
+    result = lib.list_people_and_keywords()
+    assert result["people"]["Katie"] == 3
+    assert "_UNKNOWN_" not in result["people"]
+    assert result["keywords"]["Kids"] == 4
+    assert "Birthday" not in result["keywords"]
+
+
+def test_export_copies_files_and_reports_what_it_skipped(lib, tmp_path):
+    destination = tmp_path / "new folder"
+    result = lib.export([PUMPKINS2, NOT_DOWNLOADED, "nope"], str(destination))
+    assert [Path(p).name for p in result["exported"]] == ["Pumkins2.jpg"]
+    assert (destination / "Pumkins2.jpg").is_file()
+    assert result["skipped"] == [
+        {"uuid": NOT_DOWNLOADED, "reason": "not downloaded from iCloud"},
+        {"uuid": "nope", "reason": "not found"},
+    ]
+
+
+def test_export_uses_the_edited_version_when_there_is_one(lib, tmp_path):
+    result = lib.export([WEDDING], str(tmp_path))
+    assert len(result["exported"]) == 1
+    exported = Path(result["exported"][0])
+    assert exported.is_file()
+    assert exported.read_bytes() == Path(lib.get_photo(WEDDING)["path_edited"]).read_bytes()
+
+
+def test_export_does_not_overwrite_existing_files(lib, tmp_path):
+    first = lib.export([PUMPKINS2], str(tmp_path))["exported"]
+    second = lib.export([PUMPKINS2], str(tmp_path))["exported"]
+    assert first != second
+    assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_database_is_loaded_once_and_reloaded_when_the_library_changes(library_path):
+    lib = Library(library_path)
+    first = lib.db()
+    assert lib.db() is first
+    database = Path(first.db_path)
+    stat = database.stat()
+    os.utime(database, (stat.st_atime, stat.st_mtime + 10))
+    try:
+        assert lib.db() is not first
+    finally:
+        os.utime(database, (stat.st_atime, stat.st_mtime))
+
+
+def test_unreadable_library_error_explains_full_disk_access(monkeypatch):
+    def denied(*args, **kwargs):
+        raise OSError("Error copying Photos.sqlite")
+
+    monkeypatch.setattr("osxphotos.PhotosDB", denied)
+    with pytest.raises(RuntimeError, match="Full Disk Access"):
+        Library(None).db()
