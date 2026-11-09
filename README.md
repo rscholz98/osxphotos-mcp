@@ -54,6 +54,8 @@ Then give the app that runs the server (Claude, your terminal, ...) **Full Disk 
 
 If the client cannot find `uvx`, use its full path (`which uvx`).
 
+Each start of the server uses the latest version from this repository, so restarting the client updates it. To stay on one version, add its tag to the URL: `git+https://github.com/rscholz98/osxphotos-mcp@v0.3.0`.
+
 ## Tools
 
 | Tool | What it does |
@@ -68,6 +70,8 @@ If the client cannot find `uvx`, use its full path (`which uvx`).
 
 The first five are small and typed, so a model gets them right on the first try. The last two reach the rest of osxphotos on demand, without loading hundreds of options into every conversation.
 
+The server keeps the library in memory and reloads it in the background when it changes, so new or edited photos can take about five minutes to show up.
+
 ## Options
 
 Add these after `osxphotos-mcp` in the command or `args`:
@@ -77,7 +81,7 @@ Add these after `osxphotos-mcp` in the command or `args`:
 | `--library PATH` | Use this Photos library instead of the system library |
 | `--allow-write` | Enable commands that change your library (`add-locations`, `batch-edit`, `import`, `push-exif`, `sync`, `timewarp`) and options that overwrite or delete files or change an export database (`--overwrite`, `--report`, `--save-config`, `--cleanup`, `exportdb --sql` and similar) |
 | `--include-hidden` | Include photos you have hidden in Photos. Also needed for commands that cannot filter them, such as `timewarp` |
-| `--preload` | Load the library when the server starts, so the first request need not wait for it. A loaded library of 65,000 photos takes about 7 seconds and 2 GB of memory, which is why this is off by default |
+| `--preload` | Load the library when the server starts, so the first request need not wait for it. Loading 65,000 photos takes about 7 seconds, and the loaded library holds about 2 GB of memory, which is why this is off by default |
 
 ## Safety
 
