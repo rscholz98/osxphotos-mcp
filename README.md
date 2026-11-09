@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/rscholz98/osxphotos-mcp/actions/workflows/ci.yml"><img src="https://github.com/rscholz98/osxphotos-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/python-3.10+-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS">
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-server-8a2be2" alt="MCP server"></a>
   <a href="https://github.com/RhetTbull/osxphotos"><img src="https://img.shields.io/badge/built%20on-osxphotos-f97316" alt="Built on osxphotos"></a>

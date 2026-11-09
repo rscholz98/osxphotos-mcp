@@ -1,3 +1,4 @@
+import subprocess
 import sys
 
 import anyio
@@ -125,3 +126,36 @@ def test_osxphotos_help_narrows_a_command_to_a_topic():
     result = call(build_server(), "osxphotos_help", {"command": "query", "topic": "location"})
     assert "--no-location" in result.content[0].text
     assert "--favorite" not in result.content[0].text
+
+
+def test_server_shuts_down_without_printing_errors(library_path, tmp_path):
+    # Runs a whole client session in a child process so the server's stderr can be captured.
+    session = f"""
+import sys, anyio
+from mcp import Client, StdioServerParameters
+
+async def run():
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-c", "from osxphotos_mcp import main; main()", "--library", {library_path!r}],
+    )
+    async with Client(server) as client:
+        calls = [
+            ("search_photos", {{"limit": 1}}),
+            ("get_photo", {{"uuid": {WEDDING!r}}}),
+            ("list_albums", {{}}),
+            ("list_people_and_keywords", {{}}),
+            ("export_photos", {{"uuids": [{WEDDING!r}], "destination": {str(tmp_path)!r}}}),
+        ]
+        for tool, arguments in calls:
+            result = await client.call_tool(tool, arguments)
+            assert not result.is_error, tool
+
+anyio.run(run)
+"""
+    done = subprocess.run(
+        [sys.executable, "-c", session], capture_output=True, check=False, text=True
+    )
+    assert done.returncode == 0, done.stderr
+    assert "Error" not in done.stderr
+    assert "Exception ignored" not in done.stderr

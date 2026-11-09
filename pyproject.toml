@@ -8,7 +8,9 @@ license-files = ["LICENSE"]
 authors = [
     { name = "rscholz", email = "102604185+rscholz98@users.noreply.github.com" }
 ]
-requires-python = ">=3.10"
+# 3.11+: sqlite connections can be shared between threads there, which osxphotos needs
+# because MCP tools run on worker threads. On 3.10 the server logs an error on shutdown.
+requires-python = ">=3.11"
 keywords = ["mcp", "osxphotos", "apple-photos", "macos"]
 classifiers = [
     "Environment :: MacOS X",
