@@ -9,8 +9,8 @@ jobs:
   test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: Fetch the osxphotos test library
         run: |
           git clone --depth 1 --branch v0.78.1 --filter=blob:none --sparse \
