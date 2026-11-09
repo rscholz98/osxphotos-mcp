@@ -73,6 +73,16 @@ def test_short_aliases_of_code_executing_options_are_rejected(command, args):
         ("compare", ["/tmp/a", "/tmp/b", "--output", "/tmp/out.csv"]),
         ("compare", ["/tmp/a", "/tmp/b", "-o", "/tmp/out.csv"]),
         ("compare", ["/tmp/a", "/tmp/b", "-Vo", "/tmp/out.csv"]),
+        # these change an export database, or the files it lists
+        ("exportdb", ["/tmp/x", "--sql", "drop table export_data"]),
+        ("exportdb", ["/tmp/x", "--sql=drop table export_data"]),
+        ("exportdb", ["/tmp/x", "--create", "9.0"]),
+        ("exportdb", ["/tmp/x", "--repair"]),
+        ("exportdb", ["/tmp/x", "--vacuum"]),
+        ("exportdb", ["/tmp/x", "--upgrade"]),
+        ("exportdb", ["/tmp/x", "--update-signatures"]),
+        ("exportdb", ["/tmp/x", "--touch-file"]),
+        ("exportdb", ["/tmp/x", "--migrate-photos-library", "/tmp/new.photoslibrary"]),
     ],
 )
 def test_options_that_change_data_need_allow_write(command, args):
@@ -290,7 +300,7 @@ def test_crash_log_of_a_failed_command_is_not_left_in_the_working_directory(tmp_
         passthrough.run(
             "exportdb",
             ["not-an-export.db", "--sql", "select 1"],
-            allow_write=False,
+            allow_write=True,
             include_hidden=True,
         )
     assert not (tmp_path / "osxphotos_crash.log").exists()
@@ -336,3 +346,8 @@ def test_every_option_of_the_offered_commands_has_been_reviewed():
     for command in commands:
         new = set(found[command].split()) ^ set(reviewed.get(command, "").split())
         assert not new, f"{command}: review {sorted(new)}"
+
+
+def test_exporting_with_touch_file_needs_no_allow_write():
+    # On export it only sets the date of the files being exported.
+    passthrough.check("export", ["/tmp/x", "--touch-file"], allow_write=False)

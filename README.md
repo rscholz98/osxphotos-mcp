@@ -75,13 +75,13 @@ Add these after `osxphotos-mcp` in the command or `args`:
 | Option | Effect |
 |---|---|
 | `--library PATH` | Use this Photos library instead of the system library |
-| `--allow-write` | Enable commands that change your library (`add-locations`, `batch-edit`, `import`, `push-exif`, `sync`, `timewarp`) and options that overwrite or delete files (`--overwrite`, `--report`, `--save-config`, `--cleanup` and similar) |
+| `--allow-write` | Enable commands that change your library (`add-locations`, `batch-edit`, `import`, `push-exif`, `sync`, `timewarp`) and options that overwrite or delete files or change an export database (`--overwrite`, `--report`, `--save-config`, `--cleanup`, `exportdb --sql` and similar) |
 | `--include-hidden` | Include photos you have hidden in Photos. Also needed for commands that cannot filter them, such as `timewarp` |
 | `--preload` | Load the library when the server starts, so the first request need not wait for it. A loaded library of 65,000 photos takes about 7 seconds and 2 GB of memory, which is why this is off by default |
 
 ## Safety
 
-- Nothing changes your Photos library, and no existing file is overwritten or deleted, unless you start the server with `--allow-write`.
+- Nothing changes your Photos library or an export database, and no existing file is overwritten or deleted, unless you start the server with `--allow-write`. Exporting into a folder again with `--update` does replace files that an earlier export put there.
 - Photos you have hidden in Photos stay out of every tool's results and counts unless you start the server with `--include-hidden`. Commands that cannot filter them are refused without it: `albums`, `persons`, `keywords`, `labels`, `places`, `info`, `dump`, `compare`, `exportdb`, `exiftool`, and the write commands `batch-edit`, `import` and `timewarp`.
 - Options that run code (`--post-command`, `--post-function`, `--query-eval` and similar) are always refused, as are the interactive commands.
 - `export` writes new files wherever the model points it, and the option filter is a best effort, not a sandbox. Give this server to assistants you would trust with the osxphotos command line.

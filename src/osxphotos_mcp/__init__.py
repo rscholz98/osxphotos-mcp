@@ -11,8 +11,8 @@ def main() -> None:
     parser.add_argument(
         "--allow-write",
         action="store_true",
-        help="enable osxphotos commands and options that change the Photos library, "
-        "or overwrite or delete files",
+        help="enable osxphotos commands and options that change the Photos library or an "
+        "export database, or overwrite or delete files",
     )
     parser.add_argument(
         "--include-hidden",

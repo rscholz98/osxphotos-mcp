@@ -120,12 +120,29 @@ WRITE_OPTIONS = frozenset(
 WRITE_SHORT_OPTIONS = {"compare": "o"}
 """Single-letter aliases of write options, per command."""
 
+COMMAND_WRITE_OPTIONS = {
+    "exportdb": frozenset(
+        {
+            # change an export database or the files it lists; --sql can drop its tables
+            "--create",
+            "--migrate-photos-library",
+            "--repair",
+            "--sql",
+            "--touch-file",
+            "--update-signatures",
+            "--upgrade",
+            "--vacuum",
+        }
+    )
+}
+"""Write options of one command only, where the same name is harmless on another."""
+
 MAX_OUTPUT = 50_000
 MAX_HELP = 30_000
 TIMEOUT_SECONDS = 600
 
 _NEEDS_WRITE = "start the server with --allow-write to enable it"
-_CHANGES_DATA = "changes the library, or overwrites or deletes files"
+_CHANGES_DATA = "changes the library or an export database, or overwrites or deletes files"
 _NEEDS_HIDDEN = "start the server with --include-hidden to see hidden photos"
 _CRASH_LOG = "osxphotos_crash.log"
 
@@ -146,7 +163,8 @@ def check(
             option = arg.split("=", 1)[0]
             if option in BLOCKED_OPTIONS:
                 raise ValueError(f"Option {option} is not allowed: it can run code.")
-            if option in WRITE_OPTIONS and not allow_write:
+            write_options = WRITE_OPTIONS | COMMAND_WRITE_OPTIONS.get(command, frozenset())
+            if option in write_options and not allow_write:
                 raise ValueError(f"Option {option} {_CHANGES_DATA}; {_NEEDS_WRITE}.")
             if option == "--hidden" and not include_hidden:
                 raise ValueError(f"Hidden photos are left out; {_NEEDS_HIDDEN}.")
