@@ -80,7 +80,8 @@ def test_export_photos_writes_to_the_destination(library_path, tmp_path):
 
 
 def test_run_osxphotos_uses_the_configured_library(library_path):
-    result = call(build_server(library_path), "run_osxphotos", {"command": "albums"})
+    server = build_server(library_path, include_hidden=True)
+    result = call(server, "run_osxphotos", {"command": "albums"})
     assert "Pumpkin Farm" in result.content[0].text
 
 
@@ -162,9 +163,11 @@ anyio.run(run)
 
 
 def test_text_tools_return_plain_text_only(library_path):
-    result = call(build_server(library_path), "run_osxphotos", {"command": "albums"})
+    result = call(build_server(library_path), "run_osxphotos", {"command": "persons"})
+    assert "--include-hidden" in error_text(result)
+    result = call(build_server(library_path), "osxphotos_help", {"command": "persons"})
     assert result.structured_content is None
-    assert result.content[0].text.startswith("albums:")
+    assert result.content[0].text.startswith("Usage:")
 
 
 def test_search_photos_can_page_and_includes_hidden_only_on_request(library_path):
@@ -205,3 +208,14 @@ def test_include_hidden_flag_reaches_the_server(library_path):
         ],
     )
     assert call(command, "search_photos").structured_content["total"] == 14
+
+
+def test_hidden_photo_is_not_returned_by_get_photo_or_export(library_path, tmp_path):
+    hidden = "A1DD1F98-2ECD-431F-9AC9-5AFEFE2D3A5C"
+    server = build_server(library_path)
+    assert "hidden" in error_text(call(server, "get_photo", {"uuid": hidden}))
+    result = call(server, "export_photos", {"uuids": [hidden], "destination": str(tmp_path)})
+    assert result.structured_content == {
+        "exported": [],
+        "skipped": [{"uuid": hidden, "reason": "hidden"}],
+    }

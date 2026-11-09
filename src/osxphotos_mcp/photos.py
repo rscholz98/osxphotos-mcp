@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,6 +15,7 @@ MAX_LIMIT = 100
 RELOAD_AFTER_SECONDS = 300
 UNKNOWN_PERSON = "_UNKNOWN_"
 
+_HIDDEN = "That photo is hidden in Photos. Start the server with --include-hidden to see it."
 _NO_ACCESS = (
     "Cannot read the Photos library. Grant Full Disk Access to the app that runs this server "
     "(System Settings > Privacy & Security > Full Disk Access), then restart it. Details: {error}"
@@ -85,7 +87,7 @@ class Library:
             raise ValueError("offset must not be negative")
         start, end = _parse_date(from_date), _parse_date(to_date, end=True)
         db = self.db()
-        options = osxphotos.QueryOptions(
+        options = self._visible(
             person=[person] if person else None,
             keyword=[keyword] if keyword else None,
             place=[place] if place else None,
@@ -93,7 +95,6 @@ class Library:
             not_favorite=True if favorite is False else None,
             photos=media_type != "video",
             movies=media_type != "photo",
-            not_hidden=None if self.include_hidden else True,
             ignore_case=True,
         )
         photos = db.query(options)
@@ -115,28 +116,31 @@ class Library:
         photo = self.db().get_photo(uuid)
         if photo is None:
             raise ValueError(f"No photo with UUID '{uuid}'.")
+        if photo.hidden and not self.include_hidden:
+            raise ValueError(_HIDDEN)
         return _details(photo)
 
     def list_albums(self) -> list[dict[str, Any]]:
         db = self.db()
         albums = [
-            _compact(
-                {
-                    "title": album.title,
-                    "folder": "/".join(album.folder_names),
-                    "count": len(album.photos),
-                    "shared": shared or None,
-                }
-            )
+            entry
             for shared, infos in ((False, db.album_info), (True, db.album_info_shared))
             for album in infos
+            if (entry := _album_entry(album, shared=shared, include_hidden=self.include_hidden))
         ]
         return sorted(albums, key=lambda a: (a.get("folder", ""), a["title"]))
 
     def list_people_and_keywords(self) -> dict[str, dict[str, int]]:
-        db = self.db()
-        people = {k: v for k, v in db.persons_as_dict.items() if k != UNKNOWN_PERSON}
-        return {"people": _used(people), "keywords": _used(db.keywords_as_dict)}
+        people: Counter[str] = Counter()
+        keywords: Counter[str] = Counter()
+        for photo in self.db().query(self._visible()):
+            people.update(set(_people(photo)))
+            keywords.update(set(photo.keywords))
+        return {"people": _used(people), "keywords": _used(keywords)}
+
+    def _visible(self, **filters: Any) -> osxphotos.QueryOptions:
+        """Query options for the photos this server may show."""
+        return osxphotos.QueryOptions(not_hidden=None if self.include_hidden else True, **filters)
 
     def export(self, uuids: list[str], destination: str) -> dict[str, Any]:
         folder = Path(destination).expanduser()
@@ -150,6 +154,8 @@ class Library:
             photo = db.get_photo(uuid)
             if photo is None:
                 skipped.append({"uuid": uuid, "reason": "not found"})
+            elif photo.hidden and not self.include_hidden:
+                skipped.append({"uuid": uuid, "reason": "hidden"})
             elif not (photo.path_edited or photo.path):
                 skipped.append({"uuid": uuid, "reason": "not downloaded from iCloud"})
             else:
@@ -158,6 +164,22 @@ class Library:
                 except Exception as error:  # osxphotos raises its own, unrelated error types
                     skipped.append({"uuid": uuid, "reason": f"failed: {error}"})
         return {"exported": exported, "skipped": skipped}
+
+
+def _album_entry(album: Any, *, shared: bool, include_hidden: bool) -> dict[str, Any] | None:
+    """One line of the album list, or None for an album that holds nothing but hidden photos."""
+    photos = album.photos
+    shown = photos if include_hidden else [photo for photo in photos if not photo.hidden]
+    if photos and not shown:
+        return None
+    return _compact(
+        {
+            "title": album.title,
+            "folder": "/".join(album.folder_names),
+            "count": len(shown),
+            "shared": shared or None,
+        }
+    )
 
 
 def _album_members(db: osxphotos.PhotosDB, name: str) -> set[str]:

@@ -59,6 +59,15 @@ LIBRARY_COMMANDS = frozenset(
 HIDDEN_COMMANDS = frozenset({"add-locations", "export", "push-exif", "query", "sync"})
 """Commands that take `--not-hidden`, so hidden photos can be left out of their results."""
 
+NO_PHOTO_DATA_COMMANDS = frozenset(
+    {"about", "dbversion", "exiftool", "exportdb", "list", "orphans", "show", "uuid", "version"}
+)
+"""Read commands whose output is not drawn from the photos in the library.
+
+Every other read command must be able to filter hidden photos (`HIDDEN_COMMANDS`), or it is
+refused unless the server includes hidden photos.
+"""
+
 BLOCKED_OPTIONS = frozenset(
     {
         # run a shell command, a Python file, or a Mako template (which embeds Python)
@@ -117,8 +126,12 @@ def check(
     _check_command(command)
     if command in WRITE_COMMANDS and not allow_write:
         raise ValueError(f"'{command}' changes the Photos library; {_NEEDS_WRITE}.")
-    if command == "dump" and not include_hidden:
-        raise ValueError(f"'dump' cannot leave out hidden photos; use query, or {_NEEDS_HIDDEN}.")
+    filters_hidden = command in HIDDEN_COMMANDS | NO_PHOTO_DATA_COMMANDS | WRITE_COMMANDS
+    if not include_hidden and not filters_hidden:
+        raise ValueError(
+            f"'{command}' cannot leave out hidden photos; use the other tools or query, "
+            f"or {_NEEDS_HIDDEN}."
+        )
     for arg in args:
         if "function:" in arg:
             raise ValueError("Template functions ('function:') are not allowed: they run code.")
@@ -144,7 +157,9 @@ def build_args(
     explicit_library = any(arg.split("=", 1)[0] in ("--library", "--db") for arg in args)
     if library and command in LIBRARY_COMMANDS and not explicit_library:
         built += ["--library", library]
-    if command in HIDDEN_COMMANDS and not include_hidden and "--not-hidden" not in args:
+    if command in HIDDEN_COMMANDS and not include_hidden:
+        # Always added, and before the caller's arguments: a "--not-hidden" among them may be
+        # the value of another option, or follow "--", and would then filter nothing.
         built.append("--not-hidden")
     return built + args
 

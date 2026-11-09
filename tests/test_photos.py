@@ -7,7 +7,8 @@ from osxphotos_mcp.photos import Library
 
 PUMPKINS2 = "D79B8D77-BFFC-460B-9312-034F2877D35B"
 WEDDING = "E9BC5C36-7CD1-40A1-A72B-8B8FAC227D51"
-NOT_DOWNLOADED = "A1DD1F98-2ECD-431F-9AC9-5AFEFE2D3A5C"  # Pumpkins4.jpg, which is also hidden
+NOT_DOWNLOADED = "8E1D7BC9-9321-44F9-8CFB-4083F6B9232A"  # IMG_2000.JPG
+HIDDEN = "A1DD1F98-2ECD-431F-9AC9-5AFEFE2D3A5C"  # Pumpkins4.jpg
 TRASHED = "71E3E212-00EB-430D-8A63-5E294B268554"
 
 
@@ -149,7 +150,8 @@ def test_people_and_keywords_are_counted_without_unknown_or_unused(lib):
     result = lib.list_people_and_keywords()
     assert result["people"]["Katie"] == 3
     assert "_UNKNOWN_" not in result["people"]
-    assert result["keywords"]["Kids"] == 4
+    assert result["keywords"]["Kids"] == 3
+    assert result["keywords"]["wedding"] == 2
     assert "Birthday" not in result["keywords"]
 
 
@@ -295,3 +297,61 @@ def test_export_reports_photos_that_could_not_be_written_and_carries_on(lib, tmp
 def test_export_needs_an_absolute_destination(lib):
     with pytest.raises(ValueError, match="absolute"):
         lib.export([PUMPKINS2], "exports")
+
+
+def test_get_photo_refuses_a_hidden_photo(lib):
+    with pytest.raises(ValueError, match="hidden"):
+        lib.get_photo(HIDDEN)
+
+
+def test_get_photo_returns_a_hidden_photo_when_hidden_photos_are_included(library_path):
+    photo = Library(library_path, include_hidden=True).get_photo(HIDDEN)
+    assert photo["filename"] == "Pumpkins4.jpg"
+    assert photo["hidden"] is True
+
+
+def test_export_skips_a_hidden_photo(lib, tmp_path):
+    result = lib.export([HIDDEN], str(tmp_path))
+    assert result == {"exported": [], "skipped": [{"uuid": HIDDEN, "reason": "hidden"}]}
+
+
+def test_people_and_keyword_counts_include_hidden_photos_only_on_request(library_path):
+    result = Library(library_path, include_hidden=True).list_people_and_keywords()
+    assert result["keywords"]["Kids"] == 4
+
+
+def album(title, *hidden_flags):
+    """A stand-in for an osxphotos album; the test libraries have no hidden photo in an album."""
+    from types import SimpleNamespace
+
+    photos = [SimpleNamespace(hidden=flag) for flag in hidden_flags]
+    return SimpleNamespace(title=title, folder_names=[], photos=photos)
+
+
+def test_album_count_leaves_out_hidden_photos():
+    from osxphotos_mcp.photos import _album_entry
+
+    mixed = album("Trip", False, True, False)
+    assert _album_entry(mixed, shared=False, include_hidden=False) == {"title": "Trip", "count": 2}
+    assert _album_entry(mixed, shared=False, include_hidden=True) == {"title": "Trip", "count": 3}
+
+
+def test_album_with_only_hidden_photos_is_not_listed():
+    from osxphotos_mcp.photos import _album_entry
+
+    private = album("Private", True, True)
+    assert _album_entry(private, shared=False, include_hidden=False) is None
+    assert _album_entry(private, shared=False, include_hidden=True) == {
+        "title": "Private",
+        "count": 2,
+    }
+
+
+def test_empty_album_is_still_listed():
+    from osxphotos_mcp.photos import _album_entry
+
+    assert _album_entry(album("New"), shared=True, include_hidden=False) == {
+        "title": "New",
+        "count": 0,
+        "shared": True,
+    }

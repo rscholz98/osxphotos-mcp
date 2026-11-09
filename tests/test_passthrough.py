@@ -99,7 +99,9 @@ def test_short_output_is_returned_unchanged():
 
 
 def test_run_returns_the_command_output(library_path):
-    out = passthrough.run("albums", ["--json"], allow_write=False, library=library_path)
+    out = passthrough.run(
+        "albums", ["--json"], allow_write=False, library=library_path, include_hidden=True
+    )
     assert "Pumpkin Farm" in json.loads(out)["albums"]
 
 
@@ -192,24 +194,54 @@ def test_hidden_photos_are_filtered_out_of_commands_that_list_photos():
     ]
 
 
-def test_hidden_filter_is_not_added_twice_or_to_other_commands():
-    assert passthrough.build_args("query", ["--not-hidden"], library=None) == [
+def test_hidden_filter_is_added_even_when_the_arguments_already_contain_it():
+    # "--not-hidden" here is the value of --title, so it must not count as the filter.
+    assert passthrough.build_args("query", ["--title", "--not-hidden"], library=None) == [
         "query",
         "--not-hidden",
+        "--title",
+        "--not-hidden",
     ]
-    assert passthrough.build_args("albums", [], library=None) == ["albums"]
+
+
+def test_hidden_filter_is_not_added_when_hidden_photos_are_included():
+    assert passthrough.build_args("query", [], library=None, include_hidden=True) == ["query"]
+
+
+def test_only_these_read_commands_cannot_leave_out_hidden_photos():
+    unfiltered = passthrough.READ_COMMANDS - passthrough.HIDDEN_COMMANDS
+    assert unfiltered - passthrough.NO_PHOTO_DATA_COMMANDS == {
+        "albums",
+        "compare",
+        "dump",
+        "info",
+        "keywords",
+        "labels",
+        "persons",
+        "places",
+    }
+
+
+@pytest.mark.parametrize(
+    "command", ["albums", "compare", "dump", "info", "keywords", "labels", "persons", "places"]
+)
+def test_commands_that_cannot_leave_out_hidden_photos_are_refused(command):
+    with pytest.raises(ValueError, match="--include-hidden"):
+        passthrough.check(command, [], allow_write=False)
+    passthrough.check(command, [], allow_write=False, include_hidden=True)
+
+
+@pytest.mark.parametrize(
+    "command", ["about", "list", "show", "uuid", "exportdb", "query", "export"]
+)
+def test_commands_without_hidden_photo_data_stay_available(command):
+    passthrough.check(command, [], allow_write=False)
 
 
 def test_hidden_photos_cannot_be_requested_unless_the_server_includes_them():
     with pytest.raises(ValueError, match="--include-hidden"):
         passthrough.check("query", ["--hidden"], allow_write=False)
     passthrough.check("query", ["--hidden"], allow_write=False, include_hidden=True)
-
-
-def test_dump_is_refused_because_it_cannot_leave_out_hidden_photos():
-    with pytest.raises(ValueError, match="--include-hidden"):
-        passthrough.check("dump", [], allow_write=False)
-    passthrough.check("dump", [], allow_write=False, include_hidden=True)
 
 
 def test_run_leaves_out_hidden_photos_by_default(library_path):

@@ -81,7 +81,7 @@ Add these after `osxphotos-mcp` in the command or `args`:
 ## Safety
 
 - Nothing changes your Photos library unless you start the server with `--allow-write`.
-- Photos you have hidden in Photos stay out of search and command results unless you start the server with `--include-hidden`.
+- Photos you have hidden in Photos stay out of every tool's results and counts unless you start the server with `--include-hidden`. Commands that cannot filter them (`albums`, `persons`, `keywords`, `labels`, `places`, `info`, `dump`, `compare`) are refused without it.
 - Options that run code (`--post-command`, `--post-function`, `--query-eval` and similar) are always refused, as are the interactive commands.
 - `export` writes files wherever the model points it, and the option filter is a best effort, not a sandbox. Give this server to assistants you would trust with the osxphotos command line.
 
